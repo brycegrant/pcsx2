@@ -207,6 +207,22 @@ void GSRendererOGL::EmulateZbuffer()
 
 void GSRendererOGL::EmulateTextureShuffleAndFbmask()
 {
+	// Optimization idea: 
+	// Monster hunter does SW FBMASK on almost every draw per frame
+	// on red channel with a draw split of over 1k in many situations.
+	// Idea is to use Unsafe path when draw split is above 500 on Basic Blending.
+	// SW Path above 500 will be active on High Blending.
+	bool fast_fbmask = false;
+	if (PRIM->ABE && m_sw_blending && m_sw_blending < ACC_BLEND_HIGH) { // Run the code only when needed.
+		const size_t nb_vertex = GSUtil::GetClassVertexCount(m_vt.m_primclass);
+		const size_t draw_split_calc = m_index.tail / nb_vertex;
+
+		// Maybe even 500 is too high, data needs to be gathered from various games
+		// that use fbmask to find a good minimum.
+		fast_fbmask = draw_split_calc > 500;
+	}
+
+
 	// Uncomment to disable texture shuffle emulation.
 	// m_texture_shuffle = false;
 
@@ -267,7 +283,7 @@ void GSRendererOGL::EmulateTextureShuffleAndFbmask()
 			ps_cb.FbMask.a = ba_mask;
 
 			// No blending so hit unsafe path.
-			if (!PRIM->ABE) {
+			if (!PRIM->ABE || fast_fbmask) {
 				GL_INS("FBMASK Unsafe SW emulated fb_mask:%x on tex shuffle", fbmask);
 				m_require_one_barrier = true;
 			} else {
@@ -311,7 +327,7 @@ void GSRendererOGL::EmulateTextureShuffleAndFbmask()
 			   have been invalidated before subsequent Draws are executed.
 			 */
 			// No blending so hit unsafe path.
-			if (!PRIM->ABE || !(~ff_fbmask & ~zero_fbmask & 0x7)) {
+			if (!PRIM->ABE || fast_fbmask || !(~ff_fbmask & ~zero_fbmask & 0x7)) {
 				GL_INS("FBMASK Unsafe SW emulated fb_mask:%x on %d bits format", m_context->FRAME.FBMSK,
 						(GSLocalMemory::m_psm[m_context->FRAME.PSM].fmt == 2) ? 16 : 32);
 				m_require_one_barrier = true;
